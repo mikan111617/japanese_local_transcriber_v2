@@ -1,2 +1,6 @@
 .venv/
 models/
+__pycache__/
+transcriptions/
+.pytest_cache/
+cuda/
