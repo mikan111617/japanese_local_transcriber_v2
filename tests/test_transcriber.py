@@ -1,5 +1,4 @@
 import json
-import queue
 import tempfile
 import threading
 import unittest
@@ -75,6 +74,7 @@ class DeviceTests(unittest.TestCase):
             root = Path(temp)
             target = root / 'nvidia' / 'cudnn' / 'bin'
             target.mkdir(parents=True)
+            target = target.resolve()
             handles = []
             with patch('gpu_runtime.sys.platform', 'win32'), \
                     patch('gpu_runtime.sysconfig.get_path', return_value=temp), \
@@ -107,7 +107,7 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(factory.call_args.kwargs['device'], 'cuda')
         self.assertEqual(model.kwargs['language'], 'ja')
         self.assertIsNone(model.kwargs['initial_prompt'])
-        payload = json.loads((self.job.output_dir / '音声.json').read_text())
+        payload = json.loads((self.job.output_dir / '音声.json').read_text(encoding="utf-8"))
         self.assertEqual(payload['device'], 'cuda')
         self.assertEqual(payload['compute_type'], 'float16')
         self.assertEqual(len(list(self.job.output_dir.iterdir())), 5)
@@ -116,7 +116,7 @@ class WorkerTests(unittest.TestCase):
     def test_auto_cpu_has_visible_warning(self):
         self.run_job(Transcriber(Mock(return_value=FakeModel()), lambda: NO_GPU))
         self.assertIn('warning', [kind for kind, _ in self.events])
-        payload = json.loads((self.job.output_dir / '音声.json').read_text())
+        payload = json.loads((self.job.output_dir / '音声.json').read_text(encoding="utf-8"))
         self.assertEqual(payload['device'], 'cpu')
 
     def test_strict_gpu_never_constructs_cpu_model(self):
@@ -149,7 +149,7 @@ class WorkerTests(unittest.TestCase):
         self.run_job(Transcriber(factory, lambda: GPU))
         previews = [data for kind, data in self.events if kind == 'preview']
         self.assertEqual(previews, [(0, ''), (0, '')])
-        payload = json.loads((self.job.output_dir / '音声.json').read_text())
+        payload = json.loads((self.job.output_dir / '音声.json').read_text(encoding="utf-8"))
         self.assertEqual(payload['text'], 'CPUの結果')
         self.assertEqual(payload['device'], 'cpu')
         self.assertEqual(self.events[-1][0], 'finished')
@@ -205,8 +205,8 @@ class OutputTests(unittest.TestCase):
             self.assertTrue(paths['TXT'].read_bytes().startswith(b'\xef\xbb\xbf'))
             self.assertEqual(paths['TXT'].read_text(encoding='utf-8-sig'), '日本語。')
             self.assertIn('00:00:00,000 --> 00:00:01,250', paths['SRT'].read_text(encoding='utf-8-sig'))
-            self.assertTrue(paths['VTT'].read_text().startswith('WEBVTT\n'))
-            self.assertEqual(json.loads(paths['JSON'].read_text())['segments'][0]['text'], ' 日本語。')
+            self.assertTrue(paths['VTT'].read_text(encoding="utf-8").startswith('WEBVTT\n'))
+            self.assertEqual(json.loads(paths['JSON'].read_text(encoding="utf-8"))['segments'][0]['text'], ' 日本語。')
 
 
 if __name__ == '__main__':
