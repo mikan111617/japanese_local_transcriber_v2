@@ -426,7 +426,7 @@ class TranscriberApp:
                 self.diagnosing = False
                 self.gpu_status.set(data.detail)
                 self.gpu_button.configure(state="disabled" if self.busy else "normal")
-                self._log("GPU診断: " + data.detail)
+                self._log("GPU診断: " + data.detail + ("\n" + data.diagnostics if data.diagnostics else ""))
             elif kind in ("phase", "status"):
                 if not self.cancel_event.is_set():
                     self.status_var.set(data)

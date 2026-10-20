@@ -1,0 +1,5 @@
+# Official NVIDIA runtime wheels for Windows x64. Driver is installed separately.
+nvidia-cublas-cu12>=12.4,<13; sys_platform == 'win32'
+nvidia-cudnn-cu12>=9.1,<10; sys_platform == 'win32'
+nvidia-cuda-runtime-cu12>=12.4,<13; sys_platform == 'win32'
+nvidia-cuda-nvrtc-cu12>=12.4,<13; sys_platform == 'win32'

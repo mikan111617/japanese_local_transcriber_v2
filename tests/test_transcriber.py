@@ -59,32 +59,96 @@ class DeviceTests(unittest.TestCase):
             self.assertTrue(check_gpu().available)
             self.assertEqual(configure_dll_search(), [])
 
-    def test_windows_missing_dll_is_explained(self):
+    def test_windows_missing_runtime_is_explained(self):
         backend = SimpleNamespace(get_cuda_device_count=lambda: 1)
-        with patch('gpu_runtime.sys.platform', 'win32'), patch('gpu_runtime.configure_dll_search'), \
+        with patch('gpu_runtime.sys.platform', 'win32'), \
+                patch('gpu_runtime.configure_dll_search', return_value=[]), \
                 patch('gpu_runtime.ctypes.WinDLL', create=True, side_effect=OSError('missing')), \
-                patch.dict('sys.modules', ctranslate2=backend):
+                patch.dict('os.environ', {'PATH': ''}), patch.dict('sys.modules', ctranslate2=backend):
             status = check_gpu()
             self.assertFalse(status.available)
             self.assertIn('install_gpu.bat', status.detail)
-            self.assertIn('cublas64_12.dll', status.detail)
+            self.assertIn('cublas64_12.dll', status.missing)
+            self.assertIn('見つからない: cublas64_12.dll', status.diagnostics)
+
+    def test_windows_partial_install_lists_missing_dll(self):
+        backend = SimpleNamespace(get_cuda_device_count=lambda: 1)
+
+        def load(name):
+            if name == 'cudnn_ops64_9.dll':
+                raise OSError('missing')
+            return name
+
+        with patch('gpu_runtime.sys.platform', 'win32'), \
+                patch('gpu_runtime.configure_dll_search', return_value=[Path('nvidia/cudnn/bin')]), \
+                patch('gpu_runtime.ctypes.WinDLL', create=True, side_effect=load), \
+                patch('gpu_runtime._DLL_HANDLES', []), \
+                patch.dict('os.environ', {'PATH': ''}), patch.dict('sys.modules', ctranslate2=backend):
+            status = check_gpu()
+            self.assertEqual(status.missing, ('cudnn_ops64_9.dll',))
+            self.assertIn('cudnn_ops64_9.dll', status.detail)
+            self.assertIn('再実行', status.detail)
+
+    def test_windows_present_dll_reports_load_error(self):
+        backend = SimpleNamespace(get_cuda_device_count=lambda: 1)
+        paging = OSError('paging file')
+        paging.winerror = 1455
+        with tempfile.TemporaryDirectory() as temp:
+            (Path(temp) / 'cublasLt64_12.dll').touch()
+
+            def load(name):
+                if name.endswith('cublasLt64_12.dll'):
+                    raise paging if Path(name).is_absolute() else OSError('missing')
+                return name
+
+            with patch('gpu_runtime.sys.platform', 'win32'), \
+                    patch('gpu_runtime.configure_dll_search', return_value=[Path(temp)]), \
+                    patch('gpu_runtime.ctypes.WinDLL', create=True, side_effect=load), \
+                    patch('gpu_runtime._DLL_HANDLES', []), \
+                    patch.dict('os.environ', {'PATH': temp}), patch.dict('sys.modules', ctranslate2=backend):
+                status = check_gpu()
+        self.assertFalse(status.available)
+        self.assertEqual(status.missing, ())
+        self.assertIn('cublasLt64_12.dll（仮想メモリ（ページングファイル）不足）', status.detail)
+
+    def test_windows_dll_on_path_is_loaded_by_full_path(self):
+        backend = SimpleNamespace(get_cuda_device_count=lambda: 1,
+                                  get_supported_compute_types=lambda *args: {'float16'})
+        with tempfile.TemporaryDirectory() as temp:
+            (Path(temp) / 'cublas64_12.dll').touch()
+            handles = []
+
+            def load(name):
+                if name == 'cublas64_12.dll':
+                    raise OSError('bare names skip PATH')
+                return name
+
+            with patch('gpu_runtime.sys.platform', 'win32'), \
+                    patch('gpu_runtime.configure_dll_search', return_value=[]), \
+                    patch('gpu_runtime.ctypes.WinDLL', create=True, side_effect=load), \
+                    patch('gpu_runtime._DLL_HANDLES', handles), \
+                    patch.dict('os.environ', {'PATH': temp}), patch.dict('sys.modules', ctranslate2=backend):
+                self.assertTrue(check_gpu().available)
+            self.assertIn(str(Path(temp) / 'cublas64_12.dll'), handles)
 
     def test_pip_dll_directories_registered_once_and_kept_alive(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            target = root / 'nvidia' / 'cudnn' / 'bin'
-            target.mkdir(parents=True)
-            target = target.resolve()
+            targets = [root / 'nvidia' / package / 'bin' for package in ('cublas', 'cudnn')]
+            for target in targets:
+                target.mkdir(parents=True)
+            (root / 'nvidia' / 'cudnn' / 'include').mkdir()
+            targets = [target.resolve() for target in targets]
             handles = []
             with patch('gpu_runtime.sys.platform', 'win32'), \
-                    patch('gpu_runtime.sysconfig.get_path', return_value=temp), \
+                    patch('gpu_runtime._package_roots', return_value=[root, root]), \
                     patch('gpu_runtime.os.add_dll_directory', create=True, return_value='handle') as add, \
                     patch('gpu_runtime._DLL_HANDLES', handles), patch('gpu_runtime._REGISTERED', set()), \
                     patch.dict('os.environ'):
-                self.assertIn(target, configure_dll_search())
+                self.assertEqual(configure_dll_search(), targets)
                 configure_dll_search()
-                add.assert_called_once_with(str(target))
-                self.assertEqual(handles, ['handle'])
+                self.assertEqual([call.args[0] for call in add.call_args_list], [str(t) for t in targets])
+                self.assertEqual(handles, ['handle', 'handle'])
 
 
 class WorkerTests(unittest.TestCase):
